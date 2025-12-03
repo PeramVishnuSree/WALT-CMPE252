@@ -78,6 +78,10 @@ class ToolExecutionConfig:
     
     # Enable step-level logging
     enable_step_logging: bool = False
+    
+    # Deterministic step retry configuration
+    max_retries: int = 2
+    retry_delay: float = 1.0
 
 
 # Global config - can be overridden
@@ -354,7 +358,7 @@ class Tool:
                                 else:
                                     resolved_replace[param_name] = value
                             url_operation["replace"] = resolved_replace
-
+                            
                         params["url_operation"] = url_operation
                 except Exception as e:
                     logger.warning(f"Failed to apply URL operation: {e}")
@@ -366,26 +370,43 @@ class Tool:
         # Pass the params dictionary directly
         action_model = ActionModel(**{action_name: params})
 
-        try:
-            # Pass the original context if available, otherwise create one
-            browser_context = getattr(self.browser, "_original_context", None)
-            if not browser_context:
-                from walt.browser_use.browser.context import (
-                    BrowserContext,
-                    BrowserContextConfig,
-                )
+        # Retry loop for deterministic actions
+        max_retries = self.config.max_retries
+        last_error = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Pass the original context if available, otherwise create one
+                browser_context = getattr(self.browser, "_original_context", None)
+                if not browser_context:
+                    from walt.browser_use.browser.context import (
+                        BrowserContext,
+                        BrowserContextConfig,
+                    )
 
-                browser_context = BrowserContext(
-                    browser=self.browser, config=BrowserContextConfig()
-                )
+                    browser_context = BrowserContext(
+                        browser=self.browser, config=BrowserContextConfig()
+                    )
 
-            result = await self.controller.act(
-                action_model,
-                browser_context,
-                page_extraction_llm=self.page_extraction_llm,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Deterministic action '{action_name}' failed: {str(e)}")
+                result = await self.controller.act(
+                    action_model,
+                    browser_context,
+                    page_extraction_llm=self.page_extraction_llm,
+                )
+                # If successful, break the retry loop
+                break
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    logger.warning(
+                        f"Deterministic action '{action_name}' failed (attempt {attempt + 1}/{max_retries + 1}). Retrying in {self.config.retry_delay}s..."
+                    )
+                    await asyncio.sleep(self.config.retry_delay)
+                else:
+                    logger.error(f"Deterministic action '{action_name}' failed after {max_retries + 1} attempts.")
+        
+        if last_error:
+             raise RuntimeError(f"Deterministic action '{action_name}' failed: {str(last_error)}")
 
         # Wait for network stability after completing the action
         await self.browser._wait_for_stable_network()
