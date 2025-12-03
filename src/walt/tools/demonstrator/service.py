@@ -20,8 +20,7 @@ from patchright.async_api import async_playwright
 
 from walt.tools.generator.service import BuilderService
 
-from walt.prompts.discovery import get_demonstration_prompt
-from walt.tools.demonstrator.views import ParsedAgentStep, SimpleDomElement, SimpleResult
+from walt.tools.registry.utils import calculate_element_hash, generate_stable_selector
 from walt.tools.schema.views import SelectorToolSteps, ToolDefinitionSchema
 
 
@@ -36,239 +35,6 @@ class DemonstratorService:
 
     def _remove_none_fields_from_dict(self, d: dict) -> dict:
         return {k: v for k, v in d.items() if v is not None}
-
-    def _generate_stable_selector(self, dom_element: DOMHistoryElement) -> str:
-        """
-        Generate a stable CSS selector from DOM element attributes.
-        Prioritizes stable attributes over positional selectors.
-
-        Args:
-            dom_element: The DOM element with attributes and tag information
-
-        Returns:
-            A stable CSS selector string
-        """
-        tag_name = dom_element.tag_name.lower()
-        attributes = dom_element.attributes or {}
-
-        # Priority 1: Unique ID (if it looks stable, not auto-generated)
-        element_id = attributes.get("id", "").strip()
-        if element_id and self._is_stable_id(element_id):
-            return f"#{element_id}"
-
-        # Priority 2: Name attribute (very stable for form elements)
-        name_attr = attributes.get("name", "").strip()
-        if name_attr:
-            # For form elements, name is usually very stable
-            if tag_name in ["input", "select", "textarea", "button"]:
-                type_attr = attributes.get("type", "").strip()
-                if type_attr:
-                    return f'{tag_name}[name="{name_attr}"][type="{type_attr}"]'
-                else:
-                    return f'{tag_name}[name="{name_attr}"]'
-
-        # Priority 3: Stable attribute combinations
-        stable_selector = self._build_attribute_selector(tag_name, attributes)
-        if stable_selector:
-            return stable_selector
-
-        # Priority 4: Class-based selector (if classes look stable)
-        class_attr = attributes.get("class", "").strip()
-        if class_attr:
-            stable_classes = self._extract_stable_classes(class_attr)
-            if stable_classes:
-                class_selector = "." + ".".join(stable_classes)
-                return f"{tag_name}{class_selector}"
-
-        # Priority 5: Fallback to simplified positional selector
-        # Use the original selector but try to simplify it
-        original_selector = dom_element.css_selector or ""
-        simplified = self._simplify_positional_selector(
-            original_selector, tag_name, attributes
-        )
-        if simplified:
-            return simplified
-
-        # Last resort: return original selector or basic tag
-        return original_selector or tag_name
-
-    def _is_stable_id(self, element_id: str) -> bool:
-        """Check if an ID looks stable (not auto-generated)."""
-        # Skip IDs that look auto-generated
-        unstable_patterns = [
-            r"^[a-f0-9]{8,}$",  # Long hex strings
-            r"^\d+$",  # Pure numbers
-            r"^id\d+$",  # id123, id456
-            r"^_\w+\d+$",  # _element123
-            r"react-\w+",  # React generated IDs
-            r"mui-\d+",  # Material-UI generated IDs
-            r"^ui-id-\d+$",  # jQuery UI generated IDs like ui-id-123
-            r"^[A-Z0-9]{6,}$",  # Random uppercase sequences like B3R4DD
-            r"^\w*\d{3,}$",  # IDs ending with 3+ digits (likely generated)
-            r"^gen-\w+",  # Generated IDs with gen- prefix
-            r"^auto-\w+",  # Auto-generated IDs with auto- prefix
-        ]
-
-        for pattern in unstable_patterns:
-            if re.match(pattern, element_id, re.IGNORECASE):
-                return False
-
-        return True
-
-    def _is_stable_attribute_value(self, value: str) -> bool:
-        """Check if an attribute value looks stable (not auto-generated)."""
-        # Skip values that look auto-generated
-        unstable_value_patterns = [
-            r"^[a-f0-9]{8,}$",  # Long hex strings
-            r"^\d+$",  # Pure numbers (likely IDs)
-            r"^[A-Z0-9]{6,}$",  # Random uppercase sequences
-            r"^ui-id-\d+$",  # jQuery UI generated values
-            r"^\w*\d{4,}$",  # Values ending with 4+ digits
-            r"^tmp-\w+",  # Temporary values
-            r"^gen-\w+",  # Generated values
-        ]
-
-        for pattern in unstable_value_patterns:
-            if re.match(pattern, value, re.IGNORECASE):
-                return False
-
-        return True
-
-    def _build_attribute_selector(
-        self, tag_name: str, attributes: Dict[str, str]
-    ) -> Optional[str]:
-        """Build selector using stable attributes."""
-        # Priority attributes for different element types
-        stable_attrs = []
-
-        # For form elements
-        if tag_name in ["input", "select", "textarea", "button"]:
-            for attr in ["placeholder", "aria-label", "title", "role"]:
-                value = attributes.get(attr, "").strip()
-                if value:
-                    stable_attrs.append(f'{attr}="{value}"')
-
-        # For interactive elements
-        if tag_name in ["button", "a", "div"]:
-            for attr in ["aria-label", "role", "data-testid", "title"]:
-                value = attributes.get(attr, "").strip()
-                if value:
-                    stable_attrs.append(f'{attr}="{value}"')
-
-        # For rating/icon elements (i, span, etc.)
-        if tag_name in ["i", "span"]:
-            for attr in [
-                "data-value",
-                "data-rating",
-                "aria-label",
-                "title",
-                "data-testid",
-            ]:
-                value = attributes.get(attr, "").strip()
-                if value:
-                    stable_attrs.append(f'{attr}="{value}"')
-
-        # Generic data attributes for any element type (fallback)
-        if not stable_attrs:
-            for attr_name, value in attributes.items():
-                if attr_name.startswith("data-") and attr_name in [
-                    "data-value",
-                    "data-rating",
-                    "data-testid",
-                    "data-qa",
-                    "data-cy",
-                    "data-id",
-                    "data-role",
-                    "data-action",
-                ]:
-                    value = value.strip()
-                    # Skip dynamic-looking data attribute values
-                    if value and self._is_stable_attribute_value(value):
-                        stable_attrs.append(f'{attr_name}="{value}"')
-
-        # Build selector with most stable attributes
-        if stable_attrs:
-            # Use up to 2 most specific attributes to avoid over-specification
-            selected_attrs = stable_attrs[:2]
-            attr_selector = "[" + "][".join(selected_attrs) + "]"
-            return f"{tag_name}{attr_selector}"
-
-        return None
-
-    def _extract_stable_classes(self, class_attr: str) -> List[str]:
-        """Extract classes that appear stable (not state-related)."""
-        classes = class_attr.split()
-
-        # Filter out likely unstable classes
-        stable_classes = []
-        unstable_patterns = [
-            r"focus",
-            r"hover",
-            r"active",
-            r"selected",
-            r"checked",
-            r"disabled",
-            r"loading",
-            r"error",
-            r"success",
-            r"^\d+$",  # Pure numbers
-            r"^[a-f0-9]{6,}$",  # Hex codes
-            r"css-\w+",  # CSS-in-JS generated classes
-            r"^[A-Z0-9]{6,}$",  # Random uppercase sequences like B3R4DD
-            r"ui-id-\d+",  # jQuery UI generated classes
-            r"^x-\w+\d+",  # ExtJS style generated classes
-            r"^\w*\d{3,}$",  # Classes ending with 3+ digits
-            r"^gen-\w+",  # Generated classes with gen- prefix
-            r"^auto-\w+",  # Auto-generated classes
-            r"^tmp-\w+",  # Temporary classes
-            r"^dyn-\w+",  # Dynamic classes
-        ]
-
-        for cls in classes:
-            is_stable = True
-            for pattern in unstable_patterns:
-                if re.search(pattern, cls, re.IGNORECASE):
-                    is_stable = False
-                    break
-
-            if is_stable and len(cls) > 1:  # Skip single character classes
-                stable_classes.append(cls)
-
-        # Return up to 2 most stable classes to avoid over-specification
-        return stable_classes[:2]
-
-    def _simplify_positional_selector(
-        self, original_selector: str, tag_name: str, attributes: Dict[str, str]
-    ) -> Optional[str]:
-        """Simplify a complex positional selector by removing deep nesting."""
-        if not original_selector:
-            return None
-
-        # Try to extract the meaningful part of the selector
-        # Look for the last part that has the tag and attributes
-        parts = original_selector.split(">")
-
-        # Find the part with our target element
-        for i in range(len(parts) - 1, -1, -1):
-            part = parts[i].strip()
-            if tag_name in part:
-                # Try to build a simpler selector from this part and maybe 1-2 parents
-                simplified_parts = []
-
-                # Add up to 2 parent levels for context
-                start_idx = max(0, i - 2)
-                for j in range(start_idx, len(parts)):
-                    part_clean = parts[j].strip()
-                    # Remove nth-of-type selectors that are too specific
-                    part_clean = re.sub(r":nth-of-type\(\d+\)", "", part_clean)
-                    part_clean = re.sub(r":nth-child\(\d+\)", "", part_clean)
-                    if part_clean:
-                        simplified_parts.append(part_clean)
-
-                if simplified_parts:
-                    return " > ".join(simplified_parts)
-
-        return None
 
     def _history_to_tool_definition(
         self, history_list: AgentHistoryList
@@ -288,14 +54,7 @@ class DemonstratorService:
 
                 # hash element using stable selector instead of brittle positional selector
                 try:
-                    stable_selector = self._generate_stable_selector(element)
-                    # Use stable selector for hash generation to ensure consistency
-                    element_hash = hashlib.sha256(
-                        f"{element.tag_name}_{stable_selector}".encode()
-                    ).hexdigest()[:10]
-                    logging.info(
-                        f"Generated stable hash {element_hash} from selector: {stable_selector}"
-                    )
+                    element_hash = calculate_element_hash(element)
                 except Exception as e:
                     # Fallback to original method if stable selector generation fails
                     logging.warning(
@@ -370,7 +129,7 @@ class DemonstratorService:
 
                     # Generate a stable selector instead of using the original brittle one
                     try:
-                        stable_selector = self._generate_stable_selector(dom_element)
+                        stable_selector = generate_stable_selector(dom_element)
                         step.cssSelector = stable_selector
                         logging.info(
                             f"Generated stable selector: {stable_selector} (original: {dom_element.css_selector})"

@@ -33,6 +33,7 @@ from walt.tools.schema.views import (
     ToolDefinitionSchema,
     ToolInputSchemaDefinition,
     ToolStep,
+    WaitForElementStep,
 )
 from walt.prompts.tool_executor import (
     get_tool_executor_step_prompt,
@@ -234,10 +235,66 @@ class Tool:
         )
 
     # --- Runners ---
+    async def _execute_wait_for_element(self, step: WaitForElementStep) -> ActionResult:
+        """Execute wait_for_element step."""
+        from walt.browser_use.dom.service import DomService
+        from walt.tools.registry.utils import calculate_element_hash
+        from walt.browser_use.agent.views import ActionResult
+        from walt.browser_use.dom.views import DOMElementNode
+
+        target_hash = step.elementHash
+        timeout = step.timeout
+        start_time = asyncio.get_event_loop().time()
+        
+        logger.info(f"Waiting for element with hash {target_hash} (timeout={timeout}s)")
+
+        while asyncio.get_event_loop().time() - start_time < timeout:
+            try:
+                page = await self.browser.get_current_page()
+                dom_service = DomService(page)
+                
+                # Use highlight_elements=True to match recording environment hash generation
+                dom_state = await dom_service.get_clickable_elements(highlight_elements=True)
+                
+                found = False
+                
+                # Traverse the tree
+                nodes = [dom_state.element_tree]
+                while nodes:
+                    node = nodes.pop(0)
+                    
+                    # Calculate hash
+                    try:
+                        if isinstance(node, DOMElementNode):
+                            h = calculate_element_hash(node)
+                            if h == target_hash:
+                                found = True
+                                break
+                    except Exception:
+                        pass
+                    
+                    if hasattr(node, 'children') and node.children:
+                        nodes.extend([c for c in node.children if isinstance(c, DOMElementNode)])
+                
+                if found:
+                    logger.info(f"Found element with hash {target_hash}")
+                    return ActionResult(is_done=False, success=True, extracted_content=f"Element {target_hash} found")
+                
+            except Exception as e:
+                logger.warning(f"Error checking for element: {e}")
+            
+            await asyncio.sleep(1.0) 
+            
+        raise ValueError(f"Timeout waiting for element with hash {target_hash}")
+
     async def _run_deterministic_step(
         self, step: DeterministicToolStep, step_index: int
     ) -> ActionResult:
         """Execute a deterministic (controller) action based on step dictionary."""
+        
+        if step.type == "wait_for_element":
+             return await self._execute_wait_for_element(step)
+
         # Assumes ToolStep for deterministic type has 'action' and 'params' keys
         action_name: str = step.type  # Expect 'action' key for deterministic steps
         params: Dict[str, Any] = step.model_dump()  # Use params if present

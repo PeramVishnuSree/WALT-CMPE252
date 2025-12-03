@@ -127,6 +127,14 @@ class WaitStep(BaseToolStep):
 	seconds: float = Field(..., description='Number of seconds to wait.')
 
 
+class WaitForElementStep(BaseToolStep):
+	"""Waits for a specific element to appear in the DOM."""
+
+	type: Literal['wait_for_element']
+	elementHash: str = Field(..., description='Hash of the element to wait for.')
+	timeout: float = Field(10.0, description='Maximum time to wait in seconds.')
+
+
 # --- Union of all possible step types ---
 # This Union defines what constitutes a valid step in the "steps" list.
 DeterministicToolStep = Union[
@@ -138,6 +146,7 @@ DeterministicToolStep = Union[
 	ScrollStep,
 	PageExtractionStep,
 	WaitStep,
+	WaitForElementStep,
 ]
 
 AgenticToolStep = AgentTaskToolStep

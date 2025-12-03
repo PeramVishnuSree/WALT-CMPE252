@@ -95,6 +95,14 @@ class BuilderService:
             lines.append(
                 "  - Parameters: `task`* (string), `description` (string), `max_steps` (integer)"
             )
+        
+        if "wait_for_element" not in [
+            a.name for a in controller.registry.registry.actions.values()
+        ]:
+            lines.append("- **`wait_for_element`**: Waits for a specific element to appear in the DOM.")
+            lines.append(
+                "  - Parameters: `elementHash`* (string), `timeout` (float), `description` (string)"
+            )
         # if "extract_content" not in [
         #     a.name for a in controller.registry.registry.actions.values()
         # ]:
