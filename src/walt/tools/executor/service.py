@@ -75,6 +75,9 @@ class ToolExecutionConfig:
     
     # Network stability check before each step (usually redundant with post-action checks)
     check_network_before_step: bool = False  # Disabled for performance (post-action check is sufficient)
+    
+    # Enable step-level logging
+    enable_step_logging: bool = False
 
 
 # Global config - can be overridden
@@ -112,6 +115,10 @@ class Tool:
         """
         self.schema = tool_schema  # Store the schema object
         self.config = config or DEFAULT_TOOL_CONFIG
+
+        # Initialize step logger
+        from walt.utils.step_logger import StepLogger
+        self.step_logger = StepLogger(enabled=self.config.enable_step_logging)
 
         self.controller = controller or ToolController()
 
@@ -1080,7 +1087,7 @@ class Tool:
                 # Check if step should be skipped due to optional fields with no values
                 if self._should_skip_step(step_dict):
                     # Create a dummy successful result for skipped steps
-                    from walt.browser_use.agent.views import ActionResult
+                    # ActionResult is imported globally
 
                     result = ActionResult(
                         is_done=False,
@@ -1093,13 +1100,65 @@ class Tool:
                 # Resolve placeholders using the current context (works on the dictionary)
                 step_resolved = self._resolve_placeholders(step_dict)
 
-                # Execute step using the unified _execute_step method
-                result = await self._execute_step(step_index, step_resolved)
+                # Logging start
+                step_start_time = asyncio.get_event_loop().time()
+                current_url = "unknown"
+                try:
+                    page = await self.browser.get_current_page()
+                    current_url = page.url
+                except Exception:
+                    pass
 
-                results.append(result)
-                # Persist outputs using the resolved step dictionary
-                self._store_output(step_resolved, result)
-                logger.info(f"--- Finished Step {step_index + 1} ---\n")
+                self.step_logger.log_step_start(
+                    step_index=step_index,
+                    step_type=step_resolved.type,
+                    description=step_resolved.description
+                )
+
+                try:
+                    # Execute step using the unified _execute_step method
+                    result = await self._execute_step(step_index, step_resolved)
+                    
+                    # Logging success
+                    duration = asyncio.get_event_loop().time() - step_start_time
+                    success = True
+                    if isinstance(result, ActionResult):
+                        success = result.success if result.success is not None else True
+                        try:
+                            page = await self.browser.get_current_page()
+                            current_url = page.url
+                        except Exception:
+                            pass
+                    elif isinstance(result, AgentHistoryList):
+                        success = result.is_successful() if result.is_successful() is not None else True
+                        if result.history and result.history[-1].state:
+                             current_url = result.history[-1].state.url or current_url
+
+                    self.step_logger.log_step_end(
+                        step_index=step_index,
+                        step_type=step_resolved.type,
+                        success=success,
+                        duration=duration,
+                        current_url=current_url
+                    )
+
+                    results.append(result)
+                    # Persist outputs using the resolved step dictionary
+                    self._store_output(step_resolved, result)
+                    logger.info(f"--- Finished Step {step_index + 1} ---\n")
+                
+                except Exception as e:
+                    # Logging failure
+                    duration = asyncio.get_event_loop().time() - step_start_time
+                    self.step_logger.log_step_end(
+                        step_index=step_index,
+                        step_type=step_resolved.type,
+                        success=False,
+                        duration=duration,
+                        current_url=current_url,
+                        error=str(e)
+                    )
+                    raise e
 
             # Convert results to output model if requested
             output_model_result: T | None = None
