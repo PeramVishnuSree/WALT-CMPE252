@@ -34,6 +34,7 @@ from walt.tools.schema.views import (
     ToolInputSchemaDefinition,
     ToolStep,
     WaitForElementStep,
+    ScrollIntoViewStep,
 )
 from walt.prompts.tool_executor import (
     get_tool_executor_step_prompt,
@@ -298,6 +299,69 @@ class Tool:
             
         raise ValueError(f"Timeout waiting for element with hash {target_hash}")
 
+    async def _execute_scroll_into_view(self, step: ScrollIntoViewStep) -> ActionResult:
+        """Execute scroll_into_view step."""
+        from walt.browser_use.dom.service import DomService
+        from walt.tools.registry.utils import calculate_element_hash
+        from walt.browser_use.agent.views import ActionResult
+        from walt.browser_use.dom.views import DOMElementNode
+
+        target_hash = step.elementHash
+        
+        logger.info(f"Scrolling to element with hash {target_hash}")
+
+        page = await self.browser.get_current_page()
+        dom_service = DomService(page)
+        
+        # Use highlight_elements=True to match recording environment hash generation
+        dom_state = await dom_service.get_clickable_elements(highlight_elements=True)
+        
+        found_node = None
+        
+        # Traverse the tree to find the node
+        nodes = [dom_state.element_tree]
+        while nodes:
+            node = nodes.pop(0)
+            
+            # Calculate hash
+            try:
+                if isinstance(node, DOMElementNode):
+                    h = calculate_element_hash(node)
+                    if h == target_hash:
+                        found_node = node
+                        break
+            except Exception:
+                pass
+            
+            if hasattr(node, 'children') and node.children:
+                nodes.extend([c for c in node.children if isinstance(c, DOMElementNode)])
+        
+        if found_node:
+            logger.info(f"Found element with hash {target_hash}, scrolling into view")
+            
+            # Use xpath to locate and scroll
+            try:
+                # This assumes we can locate it by xpath stored in node
+                # Alternatively we can use the highlight index if available
+                if found_node.highlight_index is not None:
+                     # We can use the selector map from dom_state if needed, but we have the node
+                     # Actually we need a playwright locator to scroll
+                     # We can try to construct a selector or use xpath
+                     pass
+
+                # Let's try to use the enhanced selector logic from BrowserContext or similar
+                # Or just use the xpath if available
+                selector = f"xpath={found_node.xpath}"
+                locator = page.locator(selector)
+                await locator.scroll_into_view_if_needed()
+                
+                return ActionResult(is_done=False, success=True, extracted_content=f"Scrolled to element {target_hash}")
+            except Exception as e:
+                logger.warning(f"Failed to scroll to element: {e}")
+                raise e
+        else:
+            raise ValueError(f"Element with hash {target_hash} not found for scrolling")
+
     async def _run_deterministic_step(
         self, step: DeterministicToolStep, step_index: int
     ) -> ActionResult:
@@ -305,6 +369,9 @@ class Tool:
         
         if step.type == "wait_for_element":
              return await self._execute_wait_for_element(step)
+        
+        if step.type == "scroll_into_view":
+             return await self._execute_scroll_into_view(step)
 
         # Assumes ToolStep for deterministic type has 'action' and 'params' keys
         action_name: str = step.type  # Expect 'action' key for deterministic steps

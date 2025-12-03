@@ -135,6 +135,13 @@ class WaitForElementStep(BaseToolStep):
 	timeout: float = Field(10.0, description='Maximum time to wait in seconds.')
 
 
+class ScrollIntoViewStep(BaseToolStep):
+	"""Scrolls to bring a specific element into the viewport."""
+
+	type: Literal['scroll_into_view']
+	elementHash: str = Field(..., description='Hash of the element to scroll to.')
+
+
 # --- Union of all possible step types ---
 # This Union defines what constitutes a valid step in the "steps" list.
 DeterministicToolStep = Union[
@@ -147,6 +154,7 @@ DeterministicToolStep = Union[
 	PageExtractionStep,
 	WaitStep,
 	WaitForElementStep,
+	ScrollIntoViewStep,
 ]
 
 AgenticToolStep = AgentTaskToolStep

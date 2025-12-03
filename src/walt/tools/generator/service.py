@@ -103,6 +103,14 @@ class BuilderService:
             lines.append(
                 "  - Parameters: `elementHash`* (string), `timeout` (float), `description` (string)"
             )
+        
+        if "scroll_into_view" not in [
+            a.name for a in controller.registry.registry.actions.values()
+        ]:
+            lines.append("- **`scroll_into_view`**: Scrolls to bring a specific element into the viewport.")
+            lines.append(
+                "  - Parameters: `elementHash`* (string), `description` (string)"
+            )
         # if "extract_content" not in [
         #     a.name for a in controller.registry.registry.actions.values()
         # ]:
