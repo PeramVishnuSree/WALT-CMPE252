@@ -221,14 +221,24 @@ class BrowserContext:
 		if not self.config._force_keep_context_alive and self.session is not None:
 			logger.debug('BrowserContext was not properly closed before destruction')
 			try:
-				# Use sync Playwright method for force cleanup
-				if hasattr(self.session.context, '_impl_obj'):
-					asyncio.run(self.session.context._impl_obj.close())
+				# Don't try to close if we're already in an event loop
+				# The proper cleanup should happen via async context manager or explicit close()
+				try:
+					loop = asyncio.get_running_loop()
+					# If we're in a running loop, can't use asyncio.run()
+					# Just mark for cleanup - the loop will handle it
+					logger.debug('Skipping force close - already in event loop')
+				except RuntimeError:
+					# No running loop, safe to use asyncio.run()
+					if hasattr(self.session.context, '_impl_obj'):
+						asyncio.run(self.session.context._impl_obj.close())
 
 				self.session = None
 				gc.collect()
 			except Exception as e:
-				logger.warning(f'Failed to force close browser context: {e}')
+				# Suppress warnings for expected cases (already in event loop)
+				if "cannot be called from a running event loop" not in str(e):
+					logger.debug(f'Browser context cleanup: {e}')
 
 	@time_execution_async('--initialize_session')
 	async def _initialize_session(self):

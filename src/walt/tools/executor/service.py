@@ -136,6 +136,7 @@ class Tool:
         self.fallback_to_agent = fallback_to_agent
 
         self.context: dict[str, Any] = {}
+        self._last_known_url: str = "unknown"  # Track last known URL for logging
 
         self.inputs_def: List[ToolInputSchemaDefinition] = self.schema.input_schema
         self._input_model: type[BaseModel] = self._build_input_model()
@@ -372,6 +373,19 @@ class Tool:
         
         if step.type == "scroll_into_view":
              return await self._execute_scroll_into_view(step)
+
+        # Special handling for wait steps - they just sleep
+        if step.type == "wait":
+            from walt.tools.schema.views import WaitStep
+            if isinstance(step, WaitStep):
+                seconds = step.seconds
+                logger.info(f"⏳ Waiting for {seconds} seconds")
+                await asyncio.sleep(seconds)
+                return ActionResult(
+                    is_done=False,
+                    success=True,
+                    extracted_content=f"Waited for {seconds} seconds"
+                )
 
         # Assumes ToolStep for deterministic type has 'action' and 'params' keys
         action_name: str = step.type  # Expect 'action' key for deterministic steps
@@ -1192,10 +1206,42 @@ class Tool:
                 step_start_time = asyncio.get_event_loop().time()
                 current_url = "unknown"
                 try:
-                    page = await self.browser.get_current_page()
-                    current_url = page.url
+                    # Get browser context to access the page properly
+                    browser_context = getattr(self.browser, "_original_context", None)
+                    if browser_context:
+                        page = await browser_context.get_current_page()
+                        # Get URL - if it's navigation step, use the target URL
+                        if step_resolved.type == "navigation" and hasattr(step_resolved, "url"):
+                            # For navigation, use the target URL directly
+                            current_url = step_resolved.url
+                            # Update last known URL
+                            self._last_known_url = current_url
+                        else:
+                            # Wait for page to be ready and get actual URL
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=2000)
+                                current_url = page.url
+                                # If still blank, try waiting a bit more or use last known URL
+                                if current_url == "about:blank" or not current_url:
+                                    await asyncio.sleep(0.3)
+                                    current_url = page.url
+                                    if current_url == "about:blank" and self._last_known_url != "unknown":
+                                        current_url = self._last_known_url
+                            except:
+                                current_url = page.url
+                                if current_url == "about:blank" and self._last_known_url != "unknown":
+                                    current_url = self._last_known_url
+                    else:
+                        # Fallback to browser.get_current_page
+                        page = await self.browser.get_current_page()
+                        if step_resolved.type == "navigation" and hasattr(step_resolved, "url"):
+                            current_url = step_resolved.url
+                        else:
+                            current_url = page.url
                 except Exception:
-                    pass
+                    # If navigation step, use the URL from step
+                    if step_resolved.type == "navigation" and hasattr(step_resolved, "url"):
+                        current_url = step_resolved.url
 
                 self.step_logger.log_step_start(
                     step_index=step_index,
@@ -1213,21 +1259,68 @@ class Tool:
                     if isinstance(result, ActionResult):
                         success = result.success if result.success is not None else True
                         try:
-                            page = await self.browser.get_current_page()
-                            current_url = page.url
+                            # Get browser context to access the page properly
+                            browser_context = getattr(self.browser, "_original_context", None)
+                            if browser_context:
+                                page = await browser_context.get_current_page()
+                                # Wait for page to be ready and get actual URL
+                                try:
+                                    await page.wait_for_load_state("domcontentloaded", timeout=2000)
+                                    current_url = page.url
+                                    # If still blank, try waiting a bit more or use last known URL
+                                    if current_url == "about:blank" or not current_url:
+                                        await asyncio.sleep(0.3)
+                                        current_url = page.url
+                                        if current_url == "about:blank" and self._last_known_url != "unknown":
+                                            current_url = self._last_known_url
+                                    # If navigation step and URL is still blank, use step URL
+                                    if (current_url == "about:blank" and 
+                                        step_resolved.type == "navigation" and 
+                                        hasattr(step_resolved, "url")):
+                                        current_url = step_resolved.url
+                                    # Update last known URL if we got a valid one
+                                    if current_url != "about:blank" and current_url != "unknown":
+                                        self._last_known_url = current_url
+                                except:
+                                    current_url = page.url
+                                    # Fallback to step URL for navigation or last known URL
+                                    if current_url == "about:blank":
+                                        if (step_resolved.type == "navigation" and 
+                                            hasattr(step_resolved, "url")):
+                                            current_url = step_resolved.url
+                                        elif self._last_known_url != "unknown":
+                                            current_url = self._last_known_url
+                                    # Update last known URL if we got a valid one
+                                    if current_url != "about:blank" and current_url != "unknown":
+                                        self._last_known_url = current_url
+                            else:
+                                # Fallback to browser.get_current_page
+                                page = await self.browser.get_current_page()
+                                current_url = page.url
+                                # Fallback to step URL for navigation
+                                if (current_url == "about:blank" and 
+                                    step_resolved.type == "navigation" and 
+                                    hasattr(step_resolved, "url")):
+                                    current_url = step_resolved.url
                         except Exception:
-                            pass
+                            # Fallback to step URL for navigation
+                            if step_resolved.type == "navigation" and hasattr(step_resolved, "url"):
+                                current_url = step_resolved.url
                     elif isinstance(result, AgentHistoryList):
                         success = result.is_successful() if result.is_successful() is not None else True
                         if result.history and result.history[-1].state:
                              current_url = result.history[-1].state.url or current_url
 
+                    # Update last known URL if we got a valid one
+                    if current_url != "about:blank" and current_url != "unknown":
+                        self._last_known_url = current_url
+                    
                     self.step_logger.log_step_end(
                         step_index=step_index,
                         step_type=step_resolved.type,
                         success=success,
                         duration=duration,
-                        current_url=current_url
+                        current_url=current_url if current_url != "about:blank" else self._last_known_url
                     )
 
                     results.append(result)
@@ -1238,12 +1331,15 @@ class Tool:
                 except Exception as e:
                     # Logging failure
                     duration = asyncio.get_event_loop().time() - step_start_time
+                    # Use last known URL if current is blank
+                    display_url = current_url if current_url != "about:blank" else self._last_known_url
+                    
                     self.step_logger.log_step_end(
                         step_index=step_index,
                         step_type=step_resolved.type,
                         success=False,
                         duration=duration,
-                        current_url=current_url,
+                        current_url=display_url,
                         error=str(e)
                     )
                     raise e
@@ -1258,8 +1354,13 @@ class Tool:
         finally:
             # Clean-up browser after finishing tool
             if close_browser_at_end:
-                self.browser.browser_profile.keep_alive = False
-                await self.browser.close()
+                try:
+                    if hasattr(self.browser, "browser_profile"):
+                        self.browser.browser_profile.keep_alive = False
+                    # Close browser gracefully
+                    await self.browser.close()
+                except Exception as e:
+                    logger.debug(f"Browser cleanup warning: {e}")
 
         return ToolRunOutput(step_results=results, output_model=output_model_result)
 

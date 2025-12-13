@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WALT Features Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .section p {
+            margin-bottom: 15px;
+            line-height: 1.6;
+            color: #555;
+        }
+
+        .button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .button:active {
+            transform: translateY(0);
+        }
+
+        .button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .status.show {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spacer {
+            height: 200vh; /* Creates scrollable space */
+            background: linear-gradient(to bottom, #f8f9fa 0%, #e9ecef 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 1.2em;
+        }
+
+        .spacer::before {
+            content: "⬇ Scroll down to see the submit button ⬇";
+        }
+
+        .submit-section {
+            background: #fff;
+            padding: 40px;
+            text-align: center;
+            border-top: 3px solid #667eea;
+        }
+
+        .submit-button {
+            background: #28a745;
+            font-size: 1.2em;
+            padding: 18px 40px;
+        }
+
+        .submit-button:hover {
+            background: #218838;
+        }
+
+        .feature-badge {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 WALT Features Demo</h1>
+            <p>Demonstrating Advanced Tool Execution Capabilities</p>
+        </div>
+
+        <div class="content">
+            <!-- Section 1: Wait for Element Feature -->
+            <div class="section">
+                <h2>Feature 1: Wait for Element <span class="feature-badge">wait_for_element</span></h2>
+                <p>This section demonstrates the <strong>wait_for_element</strong> feature. Click the button below to trigger asynchronous content loading.</p>
+                <p>The tool will wait for the dynamically loaded content to appear before proceeding.</p>
+                <button id="loadContentBtn" class="button" onclick="loadContent()">
+                    Load Dynamic Content
+                </button>
+                <div id="dynamicContent" style="display: none; margin-top: 20px;">
+                    <div class="status success show">
+                        ✅ <strong>Content Loaded!</strong> This element appeared after a 2-second delay, demonstrating the wait_for_element feature.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 2: Form with Retry Feature -->
+            <div class="section">
+                <h2>Feature 2: Retry Policy <span class="feature-badge">retry</span></h2>
+                <p>This form demonstrates the <strong>retry policy</strong> feature. The form fields may be initially disabled and require retries.</p>
+                <form id="demoForm">
+                    <div class="form-group">
+                        <label for="name">Name:</label>
+                        <input type="text" id="name" name="name" placeholder="Enter your name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email:</label>
+                        <input type="email" id="email" name="email" placeholder="Enter your email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="message">Message:</label>
+                        <textarea id="message" name="message" rows="4" placeholder="Enter your message" required></textarea>
+                    </div>
+                </form>
+                <div id="formStatus" class="status"></div>
+            </div>
+
+            <!-- Large spacer to push submit button off-screen -->
+            <div class="spacer"></div>
+
+            <!-- Section 3: Scroll into View Feature -->
+            <div class="submit-section">
+                <h2>Feature 3: Scroll into View <span class="feature-badge">scroll_into_view</span></h2>
+                <p style="margin-bottom: 20px;">This submit button is located far down the page. The <strong>scroll_into_view</strong> feature will automatically scroll to bring it into view.</p>
+                <button id="submitBtn" class="button submit-button" onclick="submitForm()">
+                    Submit Form
+                </button>
+                <div id="submitStatus" class="status" style="margin-top: 20px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Feature 1: Simulate async content loading
+        function loadContent() {
+            const btn = document.getElementById('loadContentBtn');
+            const content = document.getElementById('dynamicContent');
+            
+            btn.disabled = true;
+            btn.innerHTML = 'Loading<span class="loading"></span>';
+            
+            // Simulate async loading with delay
+            setTimeout(() => {
+                content.style.display = 'block';
+                btn.disabled = false;
+                btn.innerHTML = 'Load Dynamic Content';
+                
+                // Add element hash attribute for WALT to find
+                content.setAttribute('data-element-hash', 'dynamic-content-loaded');
+            }, 2000);
+        }
+
+        // Feature 2: Simulate form field that may need retries
+        let retryCount = 0;
+        const maxRetries = 2;
+
+        function enableFormFields() {
+            const nameField = document.getElementById('name');
+            const emailField = document.getElementById('email');
+            const messageField = document.getElementById('message');
+            
+            // Simulate transient failure - fields may not be ready immediately
+            if (retryCount < maxRetries) {
+                retryCount++;
+                // Randomly enable fields to simulate retry success
+                if (Math.random() > 0.3) {
+                    nameField.disabled = false;
+                    emailField.disabled = false;
+                    messageField.disabled = false;
+                    nameField.setAttribute('data-element-hash', 'name-field-ready');
+                    emailField.setAttribute('data-element-hash', 'email-field-ready');
+                    messageField.setAttribute('data-element-hash', 'message-field-ready');
+                    return true;
+                }
+                return false;
+            } else {
+                // Always enable after max retries
+                nameField.disabled = false;
+                emailField.disabled = false;
+                messageField.disabled = false;
+                nameField.setAttribute('data-element-hash', 'name-field-ready');
+                emailField.setAttribute('data-element-hash', 'email-field-ready');
+                messageField.setAttribute('data-element-hash', 'message-field-ready');
+                return true;
+            }
+        }
+
+        // Auto-enable form fields after page load (with potential retry simulation)
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                enableFormFields();
+            }, 500);
+        });
+
+        // Feature 3: Form submission
+        function submitForm() {
+            const submitBtn = document.getElementById('submitBtn');
+            const status = document.getElementById('submitStatus');
+            
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = 'Submitting...';
+            
+            setTimeout(() => {
+                status.className = 'status success show';
+                status.innerHTML = '✅ <strong>Form Submitted Successfully!</strong> All features demonstrated successfully.';
+                submitBtn.innerHTML = 'Submit Form';
+                submitBtn.disabled = false;
+            }, 1000);
+        }
+
+        // Add hash attributes for WALT element identification
+        window.addEventListener('DOMContentLoaded', () => {
+            // Add hash to submit button
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.setAttribute('data-element-hash', 'submit-button-bottom');
+        });
+    </script>
+</body>
+</html>
+
+
