@@ -112,13 +112,9 @@ async def get_element_hashes():
             await page.goto(DEMO_PAGE_URL, wait_until="networkidle")
             await asyncio.sleep(2)  # Wait for page to fully load
             
-            # Click load button to trigger async content
-            await page.click("#loadContentBtn")
-            await asyncio.sleep(3)  # Wait for content to load
-            
-            # Get DOM state after content loads
+            # Get DOM state before clicking to find the button
             dom_service = DomService(page)
-            dom_state = await dom_service.get_clickable_elements(highlight_elements=True)
+            dom_state_before = await dom_service.get_clickable_elements(highlight_elements=True)
             
             # Find elements in the tree and calculate hashes
             element_hashes = {}
@@ -133,6 +129,23 @@ async def get_element_hashes():
                     if hasattr(node, 'children'):
                         nodes.extend([c for c in node.children if hasattr(c, 'tag_name')])
                 return None
+            
+            # Find load content button (before clicking)
+            def is_load_button(node):
+                return (hasattr(node, 'attributes') and 
+                       node.attributes.get('id') == 'loadContentBtn')
+            
+            load_button_node = find_element_in_tree(dom_state_before.element_tree, is_load_button)
+            if load_button_node:
+                element_hashes['load_button'] = calculate_element_hash(load_button_node)
+                logger.info(f"✅ Found load button hash: {element_hashes['load_button']}")
+            
+            # Click load button to trigger async content
+            await page.click("#loadContentBtn")
+            await asyncio.sleep(3)  # Wait for content to load
+            
+            # Get DOM state after content loads
+            dom_state = await dom_service.get_clickable_elements(highlight_elements=True)
             
             # Find dynamic content div (after it's loaded)
             def is_dynamic_content(node):
@@ -186,15 +199,19 @@ async def create_demo_tool(element_hashes):
         ),
         WaitStep(
             type="wait",
-            seconds=3.0,
-            description="Wait for page to fully load"
+            seconds=5.0,
+            description="Wait for page to fully load and render"
         ),
+    ]
+    
+    # Add the click step (retry policy will handle any transient failures)
+    tool_steps.append(
         ClickStep(
             type="click",
             cssSelector="#loadContentBtn",
-            description="Click the 'Load Dynamic Content' button to trigger async loading"
-        ),
-    ]
+            description="Click the 'Load Dynamic Content' button to trigger async loading (demonstrates retry policy)"
+        )
+    )
     
     # Add wait_for_element step if we have the hash
     if element_hashes.get('dynamic_content'):
