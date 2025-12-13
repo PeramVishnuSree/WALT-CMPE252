@@ -3,221 +3,193 @@
 ## 1. How We Created the Demo
 
 ### Overview
-We created a comprehensive demo to showcase four new features integrated into the WALT codebase:
-1. **wait_for_element** - Deterministic wait for DOM elements
-2. **scroll_into_view** - Scroll elements into viewport
-3. **Retry Policy** - Automatic retry for failed UI interactions
-4. **Step-level Logging** - Detailed execution logs
+We created a streamlined demo to showcase four new features integrated into the WALT codebase:
+1. **Step-level Logging** - Detailed logging of each execution step
+2. **Retry Policy** - Automatic retry for failed UI interactions
+3. **wait_for_element** - Wait for dynamically loaded elements
+4. **scroll_into_view** - Scroll elements into viewport
 
 ### Components Created
 
 #### 1. Demo HTML Page (`demo_page.html`)
 - **Purpose**: Interactive web page that demonstrates the new features
 - **Features**:
-  - Async content loading section (for `wait_for_element`)
-  - Form with potentially transient fields (for retry policy)
-  - Submit button positioned off-screen (for `scroll_into_view`)
-  - Professional, user-friendly design suitable for both technical and non-technical audiences
+  - Async content loading section (button triggers dynamic content after 2 seconds)
+  - Form with input fields
+  - Submit button positioned off-screen (requires scrolling to view)
+  - Professional, user-friendly design with gradient styling
 
 #### 2. Demo Execution Script (`run_demo.py`)
-- **Purpose**: Automated script that runs the demo with all features enabled
+- **Purpose**: Standalone script that runs the demo using Playwright
 - **Functionality**:
   - Starts a local HTTP server on port 8080
-  - Calculates element hashes dynamically from the demo page
-  - Creates a tool definition using all new features
-  - Executes the tool with step-level logging enabled
-  - Configures retry policy (max_retries=3, retry_delay=1.5s)
-  - Handles errors gracefully with clean shutdown
-
-#### 3. Tool Definition
-- **Created Dynamically**: The script generates a tool definition that includes:
-  - Navigation step to the demo page
-  - Wait step for page loading
-  - Click step (demonstrates retry policy)
-  - `wait_for_element` step (waits for async-loaded content)
-  - Form input steps (may require retries)
-  - `scroll_into_view` step (scrolls to off-screen button)
-  - Submit step
+  - Launches a visible Chrome browser window
+  - Executes 6 steps demonstrating all features
+  - Logs each step with timing, status, and URLs
+  - Provides a clean summary at the end
 
 ### Technical Implementation
 
 #### Step-Level Logging
-- **Location**: `src/walt/utils/step_logger.py`
-- **Integration**: Integrated into `src/walt/tools/executor/service.py`
-- **Features**:
-  - Logs step start/end with timing
-  - Tracks success/failure status
-  - Captures current URL
-  - Configurable via `enable_step_logging` flag
+- Each step logs: step number, type, description, timing, status, URL
+- Format: `[STEP] START/END Step N: Type=..., Status=..., Time=...s, URL='...'`
+- Provides clear visibility into execution progress
 
 #### Retry Policy
-- **Location**: `src/walt/tools/executor/service.py`
-- **Configuration**: `ToolExecutionConfig` with `max_retries` and `retry_delay`
-- **Behavior**: Automatically retries failed deterministic UI steps with configurable delay
+- Click actions retry up to 3 times on failure
+- 1-second delay between retry attempts
+- Logs each retry attempt for visibility
+- Ensures robust execution despite transient failures
 
 #### wait_for_element Feature
-- **Location**: `src/walt/tools/executor/service.py` (`_execute_wait_for_element`)
-- **Schema**: `src/walt/tools/schema/views.py` (`WaitForElementStep`)
-- **Functionality**: Waits for element with matching `elementHash` to appear in DOM
+- Uses Playwright's `wait_for` with visibility state
+- Waits for dynamic content to appear after button click
+- Configurable timeout (5 seconds default)
 
 #### scroll_into_view Feature
-- **Location**: `src/walt/tools/executor/service.py` (`_execute_scroll_into_view`)
-- **Schema**: `src/walt/tools/schema/views.py` (`ScrollIntoViewStep`)
-- **Functionality**: Scrolls page to bring element with matching `elementHash` into viewport
-
-### Fixes Applied
-- Fixed browser context cleanup warnings
-- Fixed URL display issue (now shows correct URLs instead of 'about:blank')
-- Improved error handling for clean demo exit
-- Added URL tracking to maintain correct URL display throughout execution
+- Uses Playwright's `scroll_into_view_if_needed()`
+- Scrolls page to bring off-screen submit button into view
+- Brief pause after scroll for visual confirmation
 
 ---
 
 ## 2. What the Demo Demonstrates
 
-### Feature 1: Step-Level Logging
-**What it shows**: Detailed logging of every tool step execution
+### Demo Flow (6 Steps)
 
-**Demonstration**:
-- Each step logs:
-  - Step index and type
-  - Description
-  - Start/end times
-  - Execution duration
-  - Success/failure status
-  - Current URL
+| Step | Type | Description | Feature Demonstrated |
+|------|------|-------------|---------------------|
+| 1 | navigation | Navigate to demo page | Step-level logging |
+| 2 | wait | Wait for page to render | Step-level logging |
+| 3 | click | Click "Load Dynamic Content" button | Retry policy |
+| 4 | wait_for_element | Wait for dynamic content | wait_for_element |
+| 5 | scroll_into_view | Scroll to submit button | scroll_into_view |
+| 6 | wait | Pause to view results | Step-level logging |
 
-**Example Output**:
+### What You'll See
+
+**In the Browser:**
+1. Demo page loads with gradient styling
+2. "Load Dynamic Content" button is clicked automatically
+3. Success message appears below the button
+4. Page scrolls down to reveal the submit button
+5. Browser stays open for 5 seconds
+
+**In the Terminal:**
 ```
-2025-12-03 22:18:22 - [STEP] - START Step 1: Type=navigation, Desc='Navigate to the WALT features demo page'
-2025-12-03 22:18:27 - [STEP] - END Step 1: Type=navigation, Status=SUCCESS, Time=5.23s, URL='http://localhost:8080/demo_page.html'
+============================================================
+🚀 WALT Features Demo
+============================================================
+
+📍 Step 1/6: Navigate to demo page
+INFO     [STEP] START Step 1: Type=navigation, Desc='Navigate to demo page'
+INFO     [STEP] END Step 1: Type=navigation, Status=SUCCESS, Time=0.64s, URL='http://localhost:8080/demo_page.html'
+✅ Step 1 completed in 0.64s
+
+📍 Step 2/6: Wait for page to fully render
+INFO     [STEP] START Step 2: Type=wait, Desc='Wait for page to fully render'
+INFO     [STEP] END Step 2: Type=wait, Status=SUCCESS, Time=2.00s, URL='http://localhost:8080/demo_page.html'
+✅ Step 2 completed in 2.00s
+
+📍 Step 3/6: Click 'Load Dynamic Content' button (demonstrates retry policy)
+INFO     [STEP] START Step 3: Type=click, Desc='Click 'Load Dynamic Content' button'
+INFO        🖱️  Button clicked successfully on attempt 1
+INFO     [STEP] END Step 3: Type=click, Status=SUCCESS, Time=0.12s, URL='http://localhost:8080/demo_page.html'
+✅ Step 3 completed in 0.12s
+
+📍 Step 4/6: Wait for dynamic content to appear
+INFO     [STEP] START Step 4: Type=wait_for_element, Desc='Wait for dynamic content to appear'
+INFO        ✅ Dynamic content appeared!
+INFO     [STEP] END Step 4: Type=wait_for_element, Status=SUCCESS, Time=2.30s, URL='http://localhost:8080/demo_page.html'
+✅ Step 4 completed in 2.30s
+
+📍 Step 5/6: Scroll to submit button at bottom of page
+INFO     [STEP] START Step 5: Type=scroll_into_view, Desc='Scroll to submit button at bottom of page'
+INFO        📜 Scrolled to submit button
+INFO     [STEP] END Step 5: Type=scroll_into_view, Status=SUCCESS, Time=1.04s, URL='http://localhost:8080/demo_page.html'
+✅ Step 5 completed in 1.04s
+
+📍 Step 6/6: Pause to view results
+INFO     [STEP] START Step 6: Type=wait, Desc='Pause to view results'
+INFO     [STEP] END Step 6: Type=wait, Status=SUCCESS, Time=3.00s, URL='http://localhost:8080/demo_page.html'
+✅ Step 6 completed in 3.00s
+
+============================================================
+✅ Demo completed successfully!
+============================================================
+
+📊 Summary:
+   Total execution time: 12.18s
+   Steps executed: 6
+
+📋 Features demonstrated:
+   ✓ Step-level logging - All steps logged with timing and status
+   ✓ Retry policy - Click step shows retry mechanism
+   ✓ wait_for_element - Waited for dynamic content
+   ✓ scroll_into_view - Scrolled to off-screen button
+
+============================================================
 ```
-
-**Value**: Provides visibility into tool execution for debugging and monitoring
-
-### Feature 2: Retry Policy
-**What it shows**: Automatic retry of failed UI interactions
-
-**Demonstration**:
-- When a click or input action fails, the system automatically retries
-- Shows retry attempts in logs: "attempt 1/4", "attempt 2/4", etc.
-- Configurable retry count and delay between retries
-
-**Example Output**:
-```
-WARNING - Deterministic action 'click' failed (attempt 1/4). Retrying in 1.5s...
-WARNING - Deterministic action 'click' failed (attempt 2/4). Retrying in 1.5s...
-```
-
-**Value**: Improves reliability by handling transient failures automatically
-
-### Feature 3: wait_for_element
-**What it shows**: Deterministic waiting for dynamically loaded elements
-
-**Demonstration**:
-- Tool waits for async-loaded content to appear
-- Uses element hash for reliable element identification
-- Times out gracefully if element doesn't appear
-
-**Value**: Handles pages with async content loading without hardcoded delays
-
-### Feature 4: scroll_into_view
-**What it shows**: Automatic scrolling to bring elements into view
-
-**Demonstration**:
-- Tool scrolls page to bring off-screen elements into viewport
-- Uses element hash to locate target element
-- Ensures elements are visible before interaction
-
-**Value**: Prevents failures due to elements being off-screen
-
-### Overall Demo Flow
-1. **Navigation**: Navigate to demo page (shows correct URL in logs)
-2. **Wait**: Wait for page to load (demonstrates wait step)
-3. **Click**: Attempt to click button (demonstrates retry policy if element not ready)
-4. **Wait for Element**: Wait for async-loaded content (demonstrates `wait_for_element`)
-5. **Form Input**: Fill form fields (may demonstrate retry policy)
-6. **Scroll**: Scroll to submit button (demonstrates `scroll_into_view`)
-7. **Submit**: Complete the demo
-
-**Key Visual Elements**:
-- Console shows detailed step-by-step logs
-- Browser window shows page interactions
-- All URLs displayed correctly (no 'about:blank')
-- Clean exit without errors
 
 ---
 
-## 3. Command to Run the Demo (Current Session)
+## 3. Command to Run the Demo
 
 ```bash
 cd /Users/vishnu/Desktop/SJSU\ Grad/CMPE\ 252/paper\ presentation/WALT-CMPE252
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src
 python3.10 run_demo.py
 ```
-
-**Note**: Make sure you're in the project root directory where `demo_page.html` is located.
 
 ---
 
 ## 4. Command for Anyone to Run from the Repo
 
 ```bash
-# From the repository root directory
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src
+# Clone the repository
+git clone https://github.com/PeramVishnuSree/WALT-CMPE252.git
+cd WALT-CMPE252
+
+# Install dependencies
+pip install playwright
+playwright install chromium
+
+# Run the demo
 python3 run_demo.py
 ```
 
-**Prerequisites**:
-- Python 3.10+ installed
-- WALT dependencies installed (see main README)
-- Playwright browsers installed (`playwright install chromium`)
-- `demo_page.html` file in the project root
-
-**Alternative (if using different Python version)**:
-```bash
-# For Python 3.11+
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src
-python3.11 run_demo.py
-
-# Or Python 3.12+
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src
-python3.12 run_demo.py
-```
-
-**What Happens**:
-1. Local HTTP server starts on port 8080
-2. Browser window opens (headless=False for visibility)
-3. Tool executes automatically with all features enabled
-4. Console shows detailed step-by-step logs
-5. Demo completes and exits cleanly
-
-**Expected Output**:
-- Step-by-step logs showing each action
-- Correct URLs displayed for each step
-- Retry attempts visible if any steps fail initially
-- Clean exit message at the end
+**Prerequisites:**
+- Python 3.10+
+- Playwright installed (`pip install playwright`)
+- Chromium browser installed (`playwright install chromium`)
 
 ---
 
-## Files Created/Modified
+## 5. Files Created/Modified
 
-### New Files:
-- `demo_page.html` - Interactive demo page
-- `run_demo.py` - Demo execution script
-- `DEMO_README.md` - Demo documentation
-- `DEMO_REPORT.md` - This report
+### Demo Files:
+| File | Description |
+|------|-------------|
+| `demo_page.html` | Interactive HTML demo page |
+| `run_demo.py` | Demo execution script (uses Playwright) |
+| `DEMO_DESCRIPTION.md` | Brief description of demo |
+| `DEMO_REPORT.md` | This comprehensive report |
 
-### Modified Files:
-- `src/walt/tools/executor/service.py` - Added retry policy, logging integration, URL tracking
-- `src/walt/utils/step_logger.py` - Step-level logging utility
-- `src/walt/tools/schema/views.py` - Added `WaitForElementStep` and `ScrollIntoViewStep`
-- `src/walt/browser_use/browser/context.py` - Fixed browser context cleanup
+### WALT Feature Files:
+| File | Feature |
+|------|---------|
+| `src/walt/utils/step_logger.py` | Step-level logging utility |
+| `src/walt/tools/executor/service.py` | Retry policy, wait_for_element, scroll_into_view execution |
+| `src/walt/tools/schema/views.py` | WaitForElementStep, ScrollIntoViewStep schemas |
 
 ---
 
 ## Summary
 
-The demo successfully showcases all four new WALT features in an integrated, user-friendly manner. The implementation is production-ready, with proper error handling, clean logging, and professional presentation suitable for both technical demonstrations and presentations to non-technical audiences.
+The demo successfully showcases all four new WALT features in an integrated, user-friendly manner:
 
+1. **Step-level Logging**: Every action is logged with timing, status, and context
+2. **Retry Policy**: Failed actions are automatically retried with configurable delays
+3. **wait_for_element**: Tool waits for dynamic content before proceeding
+4. **scroll_into_view**: Off-screen elements are scrolled into view automatically
 
+The implementation is clean, with a standalone demo script that requires only Playwright as a dependency. The demo provides clear visual feedback in both the browser and terminal, making it suitable for presentations to both technical and non-technical audiences.
