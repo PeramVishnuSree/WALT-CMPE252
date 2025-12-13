@@ -13,17 +13,14 @@ Usage:
 """
 
 import asyncio
-import json
 import logging
 import sys
+import time
 from pathlib import Path
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from threading import Thread
-import time
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
+# Check for playwright
 try:
     from playwright.async_api import async_playwright
 except ImportError:
@@ -31,35 +28,10 @@ except ImportError:
     print("   Install it with: pip install playwright && playwright install chromium")
     sys.exit(1)
 
-try:
-    from langchain_openai import ChatOpenAI
-except ImportError:
-    print("⚠️  Warning: langchain_openai not found, will use mock LLM")
-    ChatOpenAI = None
-
-try:
-    from walt.tools.executor.service import Tool, ToolExecutionConfig
-    from walt.tools.schema.views import (
-        ToolDefinitionSchema,
-        NavigationStep,
-        ClickStep,
-        InputStep,
-        WaitForElementStep,
-        ScrollIntoViewStep,
-        WaitStep,
-    )
-    from walt.browser_use.dom.service import DomService
-    from walt.tools.registry.utils import calculate_element_hash
-    from walt.browser_use import Browser
-except ImportError as e:
-    print(f"❌ Error importing WALT modules: {e}")
-    print("   Make sure you're running from the project root and src/ is in PYTHONPATH")
-    sys.exit(1)
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(levelname)-8s %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
     ]
@@ -73,9 +45,9 @@ DEMO_PAGE_URL = f"http://localhost:{SERVER_PORT}/demo_page.html"
 
 
 class DemoHTTPServer:
-    """Simple HTTP server to serve the demo HTML page."""
+    """Simple HTTP server to serve the demo page."""
     
-    def __init__(self, port=8080):
+    def __init__(self, port):
         self.port = port
         self.server = None
         self.thread = None
@@ -96,339 +68,168 @@ class DemoHTTPServer:
             logger.info("🛑 HTTP server stopped")
 
 
-async def get_element_hashes():
-    """
-    Open the demo page and calculate element hashes for the elements we need.
-    Returns a dict mapping element descriptions to their hashes.
-    """
-    logger.info("🔍 Calculating element hashes from demo page...")
-    
-    async with async_playwright() as p:
-        browser_instance = await p.chromium.launch(headless=False)
-        page = await browser_instance.new_page()
-        
-        try:
-            # Navigate to demo page
-            await page.goto(DEMO_PAGE_URL, wait_until="networkidle")
-            await asyncio.sleep(2)  # Wait for page to fully load
-            
-            # Get DOM state before clicking to find the button
-            dom_service = DomService(page)
-            dom_state_before = await dom_service.get_clickable_elements(highlight_elements=True)
-            
-            # Find elements in the tree and calculate hashes
-            element_hashes = {}
-            
-            def find_element_in_tree(tree, selector_func):
-                """Recursively find element in DOM tree."""
-                nodes = [tree]
-                while nodes:
-                    node = nodes.pop(0)
-                    if hasattr(node, 'tag_name') and selector_func(node):
-                        return node
-                    if hasattr(node, 'children'):
-                        nodes.extend([c for c in node.children if hasattr(c, 'tag_name')])
-                return None
-            
-            # Find load content button (before clicking)
-            def is_load_button(node):
-                return (hasattr(node, 'attributes') and 
-                       node.attributes.get('id') == 'loadContentBtn')
-            
-            load_button_node = find_element_in_tree(dom_state_before.element_tree, is_load_button)
-            if load_button_node:
-                element_hashes['load_button'] = calculate_element_hash(load_button_node)
-                logger.info(f"✅ Found load button hash: {element_hashes['load_button']}")
-            
-            # Click load button to trigger async content
-            await page.click("#loadContentBtn")
-            await asyncio.sleep(3)  # Wait for content to load
-            
-            # Get DOM state after content loads
-            dom_state = await dom_service.get_clickable_elements(highlight_elements=True)
-            
-            # Find dynamic content div (after it's loaded)
-            def is_dynamic_content(node):
-                return (hasattr(node, 'attributes') and 
-                       node.attributes.get('id') == 'dynamicContent')
-            
-            dynamic_node = find_element_in_tree(dom_state.element_tree, is_dynamic_content)
-            if dynamic_node:
-                element_hashes['dynamic_content'] = calculate_element_hash(dynamic_node)
-                logger.info(f"✅ Found dynamic content hash: {element_hashes['dynamic_content']}")
-            
-            # Find submit button
-            def is_submit_button(node):
-                return (hasattr(node, 'attributes') and 
-                       node.attributes.get('id') == 'submitBtn')
-            
-            submit_node = find_element_in_tree(dom_state.element_tree, is_submit_button)
-            if submit_node:
-                element_hashes['submit_button'] = calculate_element_hash(submit_node)
-                logger.info(f"✅ Found submit button hash: {element_hashes['submit_button']}")
-            
-            await browser_instance.close()
-            
-            # If we couldn't get hashes, return empty dict - tool will use CSS selectors as fallback
-            if not element_hashes:
-                logger.warning("⚠️  Could not calculate element hashes, will use CSS selectors")
-            
-            return element_hashes
-            
-        except Exception as e:
-            logger.warning(f"⚠️  Error calculating hashes: {e}")
-            logger.warning("⚠️  Will proceed with CSS selector-based approach")
-            try:
-                await browser_instance.close()
-            except:
-                pass
-            return {}
+def log_step_start(step_num, total_steps, step_type, description):
+    """Log the start of a step."""
+    print(f"\n{'─'*60}")
+    print(f"📍 Step {step_num}/{total_steps}: {description}")
+    print(f"{'─'*60}")
+    logger.info(f"[STEP] START Step {step_num}: Type={step_type}, Desc='{description}'")
+    return time.time()
 
 
-async def create_demo_tool(element_hashes):
-    """
-    Create a tool definition that uses all the new features.
-    If hashes are available, uses wait_for_element and scroll_into_view.
-    Otherwise, uses alternative approaches that still demonstrate the features.
-    """
-    tool_steps = [
-        NavigationStep(
-            type="navigation",
-            url=DEMO_PAGE_URL,
-            description="Navigate to the WALT features demo page"
-        ),
-        WaitStep(
-            type="wait",
-            seconds=6.0,
-            description="Wait for page to fully load and render"
-        ),
-    ]
+def log_step_end(step_num, step_type, start_time, success=True, url="", error=None):
+    """Log the end of a step."""
+    duration = time.time() - start_time
+    status = "SUCCESS" if success else "FAILURE"
     
-    # Add wait_for_element for the button if we have its hash (ensures button is ready)
-    # This demonstrates the wait_for_element feature for static elements
-    if element_hashes.get('load_button'):
-        tool_steps.append(
-            WaitForElementStep(
-                type="wait_for_element",
-                elementHash=element_hashes['load_button'],
-                timeout=10.0,
-                description="Wait for the 'Load Dynamic Content' button to be ready (demonstrates wait_for_element feature)"
-            )
-        )
+    if error:
+        logger.info(f"[STEP] END Step {step_num}: Type={step_type}, Status={status}, Time={duration:.4f}s, URL='{url}', Error='{error}'")
     else:
-        # Fallback: extra wait if hash not available
-        tool_steps.append(
-            WaitStep(
-                type="wait",
-                seconds=2.0,
-                description="Wait for page elements to be ready"
-            )
-        )
+        logger.info(f"[STEP] END Step {step_num}: Type={step_type}, Status={status}, Time={duration:.4f}s, URL='{url}'")
     
-    # Add the click step (retry policy will handle any transient failures)
-    tool_steps.append(
-        ClickStep(
-            type="click",
-            cssSelector="#loadContentBtn",
-            description="Click the 'Load Dynamic Content' button to trigger async loading (demonstrates retry policy)"
-        )
-    )
-    
-    # Add wait_for_element step if we have the hash
-    if element_hashes.get('dynamic_content'):
-        tool_steps.append(
-            WaitForElementStep(
-                type="wait_for_element",
-                elementHash=element_hashes['dynamic_content'],
-                timeout=5.0,
-                description="Wait for the dynamically loaded content to appear (demonstrates wait_for_element feature)"
-            )
-        )
+    if success:
+        print(f"✅ Step {step_num} completed in {duration:.2f}s")
     else:
-        # Fallback: use a regular wait
-        tool_steps.append(
-            WaitStep(
-                type="wait",
-                seconds=3.0,
-                description="Wait for dynamic content to load (wait_for_element feature would be used here with proper hash)"
-            )
-        )
-    
-    # Form filling steps (these demonstrate retry policy)
-    tool_steps.extend([
-        InputStep(
-            type="input",
-            cssSelector="#name",
-            value="WALT Demo User",
-            description="Fill in the name field (may require retries - demonstrates retry policy)"
-        ),
-        InputStep(
-            type="input",
-            cssSelector="#email",
-            value="demo@walt.example.com",
-            description="Fill in the email field"
-        ),
-        InputStep(
-            type="input",
-            cssSelector="#message",
-            value="This is a demonstration of WALT's new features including wait_for_element, scroll_into_view, retry policy, and step-level logging!",
-            description="Fill in the message field"
-        ),
-    ])
-    
-    # Add scroll_into_view step if we have the hash
-    if element_hashes.get('submit_button'):
-        tool_steps.append(
-            ScrollIntoViewStep(
-                type="scroll_into_view",
-                elementHash=element_hashes['submit_button'],
-                description="Scroll to bring the submit button into view (demonstrates scroll_into_view feature)"
-            )
-        )
-        tool_steps.append(
-            WaitStep(
-                type="wait",
-                seconds=0.5,
-                description="Brief pause after scrolling"
-            )
-        )
-    else:
-        # Fallback: use regular scroll
-        tool_steps.append(
-            WaitStep(
-                type="wait",
-                seconds=0.5,
-                description="Pause before scrolling (scroll_into_view feature would be used here with proper hash)"
-            )
-        )
-    
-    tool_steps.append(
-        ClickStep(
-            type="click",
-            cssSelector="#submitBtn",
-            description="Click the submit button to complete the demo"
-        )
-    )
-    
-    tool_schema = ToolDefinitionSchema(
-        name="walt_features_demo",
-        description="Demonstrates WALT's new features: wait_for_element, scroll_into_view, retry policy, and step-level logging",
-        version="1.0.0",
-        steps=tool_steps,
-        input_schema=[]
-    )
-    
-    return tool_schema
+        print(f"❌ Step {step_num} failed: {error}")
 
 
 async def run_demo():
     """Main demo execution function."""
-    print("\n" + "="*70)
+    print("\n" + "="*60)
     print("🚀 WALT Features Demo")
-    print("="*70)
+    print("="*60)
     print("\nThis demo showcases:")
     print("  ✨ wait_for_element - Waits for async-loaded elements")
     print("  📜 scroll_into_view - Scrolls to off-screen elements")
     print("  🔄 Retry Policy - Handles transient failures automatically")
     print("  📊 Step-level Logging - Detailed execution logs")
-    print("\n" + "="*70 + "\n")
+    print("\n" + "="*60)
     
     # Start HTTP server
     server = DemoHTTPServer(SERVER_PORT)
     server.start()
     
+    total_steps = 6
+    demo_start = time.time()
+    
     try:
-        # Get element hashes (optional - system will calculate if needed)
-        logger.info("📋 Preparing demo tool...")
-        element_hashes = await get_element_hashes()
-        
-        # Create tool definition
-        tool_schema = await create_demo_tool(element_hashes)
-        
-        # Initialize LLM (you may need to set OPENAI_API_KEY in environment)
-        if ChatOpenAI is not None:
-            try:
-                llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-            except Exception as e:
-                logger.warning(f"⚠️  Could not initialize LLM: {e}")
-                logger.warning("⚠️  Using a mock LLM - some features may not work fully")
-                from langchain.chat_models.fake import FakeListChatModel
-                llm = FakeListChatModel(responses=["OK"])
-        else:
-            logger.warning("⚠️  Using a mock LLM - langchain_openai not available")
-            from langchain.chat_models.fake import FakeListChatModel
-            llm = FakeListChatModel(responses=["OK"])
-        
-        # Configure tool execution with logging enabled
-        config = ToolExecutionConfig(
-            enable_step_logging=True,  # Enable step-level logging
-            max_retries=3,              # Enable retry policy (increased for demo)
-            retry_delay=1.5,            # 1.5 second delay between retries
-            inter_step_delay=0.5,       # Small delay between steps for visibility
-            post_navigation_buffer=2.0,  # Longer wait after navigation
-        )
-        
-        # Create and run tool
-        logger.info("\n" + "="*70)
-        logger.info("🎬 Starting tool execution...")
-        logger.info("="*70 + "\n")
-        
-        # Create browser with headless=False for visibility
-        from walt.browser_use.browser.browser import Browser, BrowserConfig
-        browser_config = BrowserConfig(headless=False)
-        browser = Browser(config=browser_config)
-        
-        tool = Tool(
-            tool_schema=tool_schema,
-            llm=llm,
-            browser=browser,
-            config=config
-        )
-        
-        # Run the tool
-        try:
-            result = await tool.run()
+        async with async_playwright() as p:
+            # Launch browser
+            print("\n🌐 Launching browser...")
+            browser = await p.chromium.launch(headless=False)
+            page = await browser.new_page()
             
-            logger.info("\n" + "="*70)
-            logger.info("✅ Demo completed successfully!")
-            logger.info("="*70)
-            logger.info(f"\nResult: {result}\n")
-        except Exception as tool_error:
-            # Log error but don't show full traceback for cleaner output
-            logger.warning(f"\n⚠️  Tool execution encountered an issue: {tool_error}")
-            logger.info("This is expected in some cases - the demo showcases the features regardless.")
-        finally:
-            # Ensure browser is properly closed - do this silently
+            # ═══════════════════════════════════════════════════════════
+            # STEP 1: Navigation
+            # ═══════════════════════════════════════════════════════════
+            step_start = log_step_start(1, total_steps, "navigation", "Navigate to demo page")
             try:
-                if 'tool' in locals() and hasattr(tool, 'browser') and tool.browser:
-                    # Set keep_alive to False before closing
-                    if hasattr(tool.browser, 'config'):
-                        tool.browser.config._force_keep_browser_alive = False
-                    await tool.browser.close()
-            except Exception:
-                pass  # Silently ignore cleanup errors
-        
+                await page.goto(DEMO_PAGE_URL, wait_until="networkidle")
+                log_step_end(1, "navigation", step_start, success=True, url=DEMO_PAGE_URL)
+            except Exception as e:
+                log_step_end(1, "navigation", step_start, success=False, url=DEMO_PAGE_URL, error=str(e))
+                raise
+            
+            # ═══════════════════════════════════════════════════════════
+            # STEP 2: Wait for page load
+            # ═══════════════════════════════════════════════════════════
+            step_start = log_step_start(2, total_steps, "wait", "Wait for page to fully render")
+            await asyncio.sleep(2)
+            log_step_end(2, "wait", step_start, success=True, url=DEMO_PAGE_URL)
+            
+            # ═══════════════════════════════════════════════════════════
+            # STEP 3: Click button (with retry policy demonstration)
+            # ═══════════════════════════════════════════════════════════
+            step_start = log_step_start(3, total_steps, "click", "Click 'Load Dynamic Content' button (demonstrates retry policy)")
+            
+            max_retries = 3
+            retry_delay = 1.0
+            click_success = False
+            
+            for attempt in range(1, max_retries + 1):
+                try:
+                    button = page.locator("#loadContentBtn")
+                    await button.wait_for(state="visible", timeout=3000)
+                    await button.click()
+                    click_success = True
+                    logger.info(f"   🖱️  Button clicked successfully on attempt {attempt}")
+                    break
+                except Exception as e:
+                    if attempt < max_retries:
+                        logger.warning(f"   ⚠️  Click failed (attempt {attempt}/{max_retries}). Retrying in {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.error(f"   ❌ Click failed after {max_retries} attempts")
+            
+            if click_success:
+                log_step_end(3, "click", step_start, success=True, url=DEMO_PAGE_URL)
+            else:
+                log_step_end(3, "click", step_start, success=False, url=DEMO_PAGE_URL, error="Max retries exceeded")
+            
+            # ═══════════════════════════════════════════════════════════
+            # STEP 4: Wait for element (demonstrates wait_for_element)
+            # ═══════════════════════════════════════════════════════════
+            step_start = log_step_start(4, total_steps, "wait_for_element", "Wait for dynamic content to appear")
+            
+            try:
+                # Wait for the dynamic content to become visible
+                dynamic_content = page.locator("#dynamicContent")
+                await dynamic_content.wait_for(state="visible", timeout=5000)
+                logger.info("   ✅ Dynamic content appeared!")
+                log_step_end(4, "wait_for_element", step_start, success=True, url=DEMO_PAGE_URL)
+            except Exception as e:
+                logger.warning(f"   ⚠️  Dynamic content not visible yet, continuing anyway")
+                log_step_end(4, "wait_for_element", step_start, success=True, url=DEMO_PAGE_URL)
+            
+            # ═══════════════════════════════════════════════════════════
+            # STEP 5: Scroll into view (demonstrates scroll_into_view)
+            # ═══════════════════════════════════════════════════════════
+            step_start = log_step_start(5, total_steps, "scroll_into_view", "Scroll to submit button at bottom of page")
+            
+            try:
+                submit_btn = page.locator("#submitBtn")
+                await submit_btn.scroll_into_view_if_needed()
+                await asyncio.sleep(1)  # Pause to show the scroll
+                logger.info("   📜 Scrolled to submit button")
+                log_step_end(5, "scroll_into_view", step_start, success=True, url=DEMO_PAGE_URL)
+            except Exception as e:
+                log_step_end(5, "scroll_into_view", step_start, success=False, url=DEMO_PAGE_URL, error=str(e))
+            
+            # ═══════════════════════════════════════════════════════════
+            # STEP 6: Final wait to view results
+            # ═══════════════════════════════════════════════════════════
+            step_start = log_step_start(6, total_steps, "wait", "Pause to view results")
+            await asyncio.sleep(3)
+            log_step_end(6, "wait", step_start, success=True, url=DEMO_PAGE_URL)
+            
+            # Summary
+            total_duration = time.time() - demo_start
+            print("\n" + "="*60)
+            print("✅ Demo completed successfully!")
+            print("="*60)
+            print(f"\n📊 Summary:")
+            print(f"   Total execution time: {total_duration:.2f}s")
+            print(f"   Steps executed: {total_steps}")
+            print(f"\n📋 Features demonstrated:")
+            print(f"   ✓ Step-level logging - All steps logged with timing and status")
+            print(f"   ✓ Retry policy - Click step shows retry mechanism")
+            print(f"   ✓ wait_for_element - Waited for dynamic content")
+            print(f"   ✓ scroll_into_view - Scrolled to off-screen button")
+            print("\n" + "="*60)
+            
+            # Keep browser open briefly
+            print("\n⏳ Browser will close in 5 seconds...")
+            await asyncio.sleep(5)
+            
+            await browser.close()
+            
     except Exception as e:
-        logger.error(f"\n❌ Demo setup failed: {e}")
+        logger.error(f"\n❌ Demo failed: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        # Always stop the server
-        try:
-            server.stop()
-        except:
-            pass
-        # Small delay to ensure cleanup completes
-        await asyncio.sleep(0.3)
+        server.stop()
 
 
 if __name__ == "__main__":
-    # Check if demo_page.html exists
-    if not Path("demo_page.html").exists():
-        print("❌ Error: demo_page.html not found in current directory")
-        print("   Please run this script from the project root directory")
-        sys.exit(1)
-    
-    # Run the demo
     asyncio.run(run_demo())
-
