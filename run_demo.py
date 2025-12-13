@@ -199,10 +199,31 @@ async def create_demo_tool(element_hashes):
         ),
         WaitStep(
             type="wait",
-            seconds=5.0,
+            seconds=6.0,
             description="Wait for page to fully load and render"
         ),
     ]
+    
+    # Add wait_for_element for the button if we have its hash (ensures button is ready)
+    # This demonstrates the wait_for_element feature for static elements
+    if element_hashes.get('load_button'):
+        tool_steps.append(
+            WaitForElementStep(
+                type="wait_for_element",
+                elementHash=element_hashes['load_button'],
+                timeout=10.0,
+                description="Wait for the 'Load Dynamic Content' button to be ready (demonstrates wait_for_element feature)"
+            )
+        )
+    else:
+        # Fallback: extra wait if hash not available
+        tool_steps.append(
+            WaitStep(
+                type="wait",
+                seconds=2.0,
+                description="Wait for page elements to be ready"
+            )
+        )
     
     # Add the click step (retry policy will handle any transient failures)
     tool_steps.append(
